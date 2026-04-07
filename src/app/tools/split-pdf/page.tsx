@@ -1,101 +1,120 @@
 'use client';
 
-import { useState } from 'react';
-import { Download, Loader2 } from 'lucide-react';
-import { getToolBySlug } from '@/lib/tools-config';
-import { extractPages, getPageCount } from '@/lib/pdf-engine';
-import { downloadUint8Array } from '@/lib/file-utils';
+import { useState, useCallback } from 'react';
+import { Scissors, Download } from 'lucide-react';
 import ToolLayout from '@/components/ToolLayout';
 import FileDropZone from '@/components/FileDropZone';
-
-const tool = getToolBySlug('split-pdf')!;
+import ProgressBar from '@/components/ProgressBar';
+import { type FileWithMeta, downloadUint8Array } from '@/lib/file-utils';
+import { extractPages } from '@/lib/pdf-engine';
 
 export default function SplitPDFPage() {
-  const [files, setFiles] = useState<File[]>([]);
-  const [pageCount, setPageCount] = useState(0);
-  const [rangeInput, setRangeInput] = useState('');
-  const [processing, setProcessing] = useState(false);
+  const [files, setFiles] = useState<FileWithMeta[]>([]);
+  const [pageInput, setPageInput] = useState('');
+  const [status, setStatus] = useState<'idle' | 'processing' | 'done' | 'error'>('idle');
+  const [progress, setProgress] = useState(0);
+  const [error, setError] = useState('');
 
-  const handleFilesChange = async (newFiles: File[]) => {
-    setFiles(newFiles);
-    if (newFiles.length > 0) {
-      const count = await getPageCount(newFiles[0]);
-      setPageCount(count);
-      setRangeInput(`1-${count}`);
-    } else {
-      setPageCount(0);
-    }
-  };
+  const handleSplit = useCallback(async () => {
+    if (files.length === 0 || !pageInput.trim()) return;
+    setStatus('processing');
+    setProgress(30);
+    setError('');
 
-  const parseRanges = (input: string): number[] => {
-    const pages: Set<number> = new Set();
-    input.split(',').forEach(part => {
-      part = part.trim();
-      const rangeMatch = part.match(/^(\d+)-(\d+)$/);
-      if (rangeMatch) {
-        const start = parseInt(rangeMatch[1]);
-        const end = parseInt(rangeMatch[2]);
-        for (let i = start; i <= Math.min(end, pageCount); i++) pages.add(i - 1);
-      } else {
-        const num = parseInt(part);
-        if (!isNaN(num) && num >= 1 && num <= pageCount) pages.add(num - 1);
-      }
-    });
-    return Array.from(pages).sort((a, b) => a - b);
-  };
-
-  const handleSplit = async () => {
-    if (files.length === 0) return;
-    const indices = parseRanges(rangeInput);
-    if (indices.length === 0) return;
-    setProcessing(true);
     try {
-      const result = await extractPages(files[0], indices);
-      downloadUint8Array(result, `${files[0].name.replace('.pdf', '')}_split.pdf`);
+      // Parse page input: "1,3,5-8" → [0,2,4,5,6,7]
+      const pages: number[] = [];
+      const parts = pageInput.split(',').map(s => s.trim());
+      for (const part of parts) {
+        if (part.includes('-')) {
+          const [a, b] = part.split('-').map(Number);
+          for (let i = a; i <= b; i++) pages.push(i - 1); // 0-indexed
+        } else {
+          pages.push(Number(part) - 1);
+        }
+      }
+
+      const validPages = pages.filter(p => p >= 0 && !isNaN(p));
+      if (validPages.length === 0) {
+        setError('No valid pages specified');
+        setStatus('error');
+        return;
+      }
+
+      setProgress(60);
+      const result = await extractPages(files[0].file, validPages);
+      setProgress(100);
+      setStatus('done');
+      downloadUint8Array(result, `split_${files[0].name}`);
     } catch (err) {
-      console.error('Split failed:', err);
-    } finally {
-      setProcessing(false);
+      console.error(err);
+      setError('Failed to split PDF');
+      setStatus('error');
     }
-  };
+  }, [files, pageInput]);
 
   return (
-    <ToolLayout tool={tool}>
-      <FileDropZone
-        accept=".pdf"
-        multiple={false}
-        files={files}
-        onFilesChange={handleFilesChange}
-        label="Drop a PDF to split"
-      />
+    <ToolLayout
+      name="Split PDF"
+      description="Extract specific pages from a PDF. Enter page numbers or ranges."
+      icon={Scissors}
+    >
+      <div className="space-y-5">
+        <FileDropZone
+          accept=".pdf"
+          multiple={false}
+          files={files}
+          onFilesChange={setFiles}
+          label="Drop a PDF to split"
+        />
 
-      {pageCount > 0 && (
-        <div className="space-y-3">
+        {files.length > 0 && (
           <div>
-            <div className="flex items-baseline gap-2 mb-1.5">
-              <label className="text-[11px] text-zinc-500 font-mono">Pages to extract</label>
-              <span className="text-[10px] text-zinc-700 font-mono">{pageCount} pages total</span>
-            </div>
+            <label className="text-[11px] text-zinc-500 font-mono uppercase tracking-wider mb-1.5 block">
+              Pages to extract
+            </label>
             <input
               type="text"
-              value={rangeInput}
-              onChange={(e) => setRangeInput(e.target.value)}
-              placeholder="e.g., 1-3, 5, 7-10"
-              className="w-full max-w-sm bg-transparent border border-[#27272a] rounded-lg px-3 py-2 text-[13px] font-mono text-zinc-100 focus:outline-none focus:border-teal-500/40"
+              value={pageInput}
+              onChange={(e) => setPageInput(e.target.value)}
+              placeholder="e.g. 1,3,5-8,12"
+              className="w-full bg-transparent border border-[#27272a] rounded-lg px-3 py-2.5 text-[13px] font-mono text-zinc-100 placeholder:text-zinc-700 focus:outline-none focus:border-teal-500/40"
             />
-            <p className="text-[10px] text-zinc-700 mt-1">Use ranges (1-5) or individual pages (1, 3, 7) separated by commas</p>
+            <p className="text-[10px] text-zinc-600 mt-1.5">
+              Use commas for individual pages, hyphens for ranges. Page 1 is the first page.
+            </p>
           </div>
+        )}
 
+        {error && <p className="text-[11px] text-red-400">{error}</p>}
+
+        <ProgressBar progress={progress} status={status} label={
+          status === 'processing' ? 'Extracting pages...' :
+          status === 'done' ? 'Extracted — downloading' :
+          status === 'error' ? 'Split failed' : undefined
+        } />
+
+        <button
+          onClick={handleSplit}
+          disabled={files.length === 0 || !pageInput.trim() || status === 'processing'}
+          className="w-full flex items-center justify-center gap-2 bg-zinc-100 hover:bg-white disabled:bg-zinc-800 disabled:text-zinc-600 text-zinc-900 font-display font-semibold rounded-lg py-3 text-[13px] transition-all active:scale-[0.99]"
+        >
+          {status === 'done' ? (
+            <><Download size={15} /> Download Again</>
+          ) : (
+            <><Scissors size={15} /> Extract Pages</>
+          )}
+        </button>
+
+        {status === 'done' && (
           <button
-            onClick={handleSplit}
-            disabled={processing || parseRanges(rangeInput).length === 0}
-            className="flex items-center gap-2 bg-zinc-100 hover:bg-white text-zinc-900 font-display font-medium rounded-lg px-5 py-2.5 text-[13px] transition-all active:scale-[0.98] disabled:opacity-50"
+            onClick={() => { setFiles([]); setStatus('idle'); setProgress(0); setPageInput(''); }}
+            className="w-full text-center text-[12px] text-zinc-500 hover:text-zinc-300 transition-colors py-2"
           >
-            {processing ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
-            {processing ? 'Extracting...' : `Extract ${parseRanges(rangeInput).length} pages`}
+            Split another file
           </button>
-        </div>
-      )}
+        )}
+      </div>
     </ToolLayout>
   );
 }

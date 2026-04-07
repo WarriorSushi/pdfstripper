@@ -1,75 +1,98 @@
 'use client';
 
-import { useState } from 'react';
-import { Download, Loader2, RotateCw } from 'lucide-react';
-import { getToolBySlug } from '@/lib/tools-config';
-import { rotatePages } from '@/lib/pdf-engine';
-import { downloadUint8Array } from '@/lib/file-utils';
+import { useState, useCallback } from 'react';
+import { RotateCw, Download } from 'lucide-react';
 import ToolLayout from '@/components/ToolLayout';
 import FileDropZone from '@/components/FileDropZone';
-
-const tool = getToolBySlug('rotate-pages')!;
+import ProgressBar from '@/components/ProgressBar';
+import { type FileWithMeta, downloadUint8Array } from '@/lib/file-utils';
+import { rotatePages } from '@/lib/pdf-engine';
 
 export default function RotatePagesPage() {
-  const [files, setFiles] = useState<File[]>([]);
+  const [files, setFiles] = useState<FileWithMeta[]>([]);
   const [rotation, setRotation] = useState<90 | 180 | 270>(90);
-  const [processing, setProcessing] = useState(false);
+  const [status, setStatus] = useState<'idle' | 'processing' | 'done' | 'error'>('idle');
+  const [progress, setProgress] = useState(0);
 
-  const handleRotate = async () => {
+  const handleRotate = useCallback(async () => {
     if (files.length === 0) return;
-    setProcessing(true);
+    setStatus('processing');
+    setProgress(40);
+
     try {
-      const result = await rotatePages(files[0], rotation);
-      downloadUint8Array(result, `${files[0].name.replace('.pdf', '')}_rotated.pdf`);
+      const result = await rotatePages(files[0].file, rotation);
+      setProgress(100);
+      setStatus('done');
+      downloadUint8Array(result, `rotated_${files[0].name}`);
     } catch (err) {
-      console.error('Rotate failed:', err);
-    } finally {
-      setProcessing(false);
+      console.error(err);
+      setStatus('error');
     }
-  };
+  }, [files, rotation]);
 
   return (
-    <ToolLayout tool={tool}>
-      <FileDropZone
-        accept=".pdf"
-        multiple={false}
-        files={files}
-        onFilesChange={setFiles}
-        label="Drop a PDF to rotate"
-      />
+    <ToolLayout
+      name="Rotate Pages"
+      description="Rotate all pages by 90°, 180°, or 270°."
+      icon={RotateCw}
+    >
+      <div className="space-y-5">
+        <FileDropZone
+          accept=".pdf"
+          multiple={false}
+          files={files}
+          onFilesChange={setFiles}
+          label="Drop a PDF to rotate"
+        />
 
-      {files.length > 0 && (
-        <div className="space-y-3">
+        {files.length > 0 && (
           <div>
-            <label className="text-[11px] text-zinc-500 font-mono mb-1.5 block">Rotation</label>
+            <label className="text-[11px] text-zinc-500 font-mono uppercase tracking-wider mb-2 block">Rotation</label>
             <div className="flex gap-2">
               {([90, 180, 270] as const).map(deg => (
                 <button
                   key={deg}
                   onClick={() => setRotation(deg)}
-                  className={`flex items-center gap-1.5 px-3 py-2 rounded-lg border text-[12px] font-mono transition-colors ${
+                  className={`flex-1 py-2.5 rounded-lg text-[12px] font-mono font-medium transition-colors border ${
                     rotation === deg
-                      ? 'border-teal-500/40 text-teal-400 bg-teal-500/5'
+                      ? 'border-teal-500/40 bg-teal-500/10 text-teal-400'
                       : 'border-[#27272a] text-zinc-400 hover:border-zinc-600'
                   }`}
                 >
-                  <RotateCw size={12} />
                   {deg}°
                 </button>
               ))}
             </div>
           </div>
+        )}
 
+        <ProgressBar progress={progress} status={status} label={
+          status === 'processing' ? `Rotating ${rotation}°...` :
+          status === 'done' ? 'Rotated — downloading' :
+          status === 'error' ? 'Rotation failed' : undefined
+        } />
+
+        <button
+          onClick={handleRotate}
+          disabled={files.length === 0 || status === 'processing'}
+          className="w-full flex items-center justify-center gap-2 bg-zinc-100 hover:bg-white disabled:bg-zinc-800 disabled:text-zinc-600 text-zinc-900 font-display font-semibold rounded-lg py-3 text-[13px] transition-all active:scale-[0.99]"
+        >
+          {status === 'done' ? (
+            <><Download size={15} /> Download Again</>
+          ) : (
+            <><RotateCw size={15} /> Rotate {rotation}°</>
+          )}
+        </button>
+
+        {status === 'done' && (
           <button
-            onClick={handleRotate}
-            disabled={processing}
-            className="flex items-center gap-2 bg-zinc-100 hover:bg-white text-zinc-900 font-display font-medium rounded-lg px-5 py-2.5 text-[13px] transition-all active:scale-[0.98] disabled:opacity-50"
+            onClick={() => { setFiles([]); setStatus('idle'); setProgress(0); }}
+            className="w-full text-center text-[12px] text-zinc-500 hover:text-zinc-300 transition-colors py-2"
           >
-            {processing ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
-            {processing ? 'Rotating...' : `Rotate ${rotation}°`}
+            Rotate another file
           </button>
-        </div>
-      )}
+        )}
+      </div>
     </ToolLayout>
   );
 }
