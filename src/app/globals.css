@@ -1,0 +1,47 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #0a0a0b;
+  --surface: #111113;
+  --surface-2: #18181b;
+  --border: #27272a;
+  --fg: #fafafa;
+  --muted: #71717a;
+  --teal: #14b8a6;
+  --sky: #0ea5e9;
+  --green: #22c55e;
+  --amber: #f59e0b;
+  --red: #ef4444;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-inter), system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection { background: color-mix(in srgb, var(--teal) 30%, transparent); }
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+
+/* Drag-and-drop animation */
+@keyframes pulse-border {
+  0%, 100% { border-color: var(--teal); }
+  50% { border-color: var(--sky); }
+}
+
+.drag-active { animation: pulse-border 1.5s ease-in-out infinite; }
+
+/* Success checkmark */
+@keyframes draw-check {
+  from { stroke-dashoffset: 24; }
+  to { stroke-dashoffset: 0; }
+}
+
+.check-animate { animation: draw-check 0.3s ease-out forwards; }
