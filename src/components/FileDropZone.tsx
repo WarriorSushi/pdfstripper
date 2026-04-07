@@ -1,99 +1,121 @@
 'use client';
 
-import { useState, useRef, useCallback, type DragEvent } from 'react';
-import { Upload, File as FileIcon, X } from 'lucide-react';
-import { formatFileSize, createFileWithMeta, type FileWithMeta } from '@/lib/file-utils';
+import { useState, useRef, useCallback } from 'react';
+import { Upload, File, X, AlertCircle } from 'lucide-react';
+import { formatFileSize } from '@/lib/file-utils';
 
 interface FileDropZoneProps {
   accept: string;
   multiple: boolean;
-  files: FileWithMeta[];
-  onFilesChange: (files: FileWithMeta[]) => void;
+  files: File[];
+  onFilesChange: (files: File[]) => void;
   maxFiles?: number;
   label?: string;
 }
 
 export default function FileDropZone({
-  accept, multiple, files, onFilesChange, maxFiles = 50,
-  label = 'Drop files here or click to browse'
+  accept, multiple, files, onFilesChange, maxFiles = 20, label
 }: FileDropZoneProps) {
-  const [isDragOver, setIsDragOver] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const addFiles = useCallback((newFiles: FileList | File[]) => {
-    const arr = Array.from(newFiles).map(createFileWithMeta);
+  const handleFiles = useCallback((incoming: FileList | null) => {
+    if (!incoming) return;
+    setError(null);
+    const arr = Array.from(incoming);
+
+    // Validate file types
+    const acceptTypes = accept.split(',').map(t => t.trim().toLowerCase());
+    const valid = arr.filter(f => {
+      const ext = '.' + f.name.split('.').pop()?.toLowerCase();
+      return acceptTypes.some(t => t === ext || f.type.includes(t.replace('.', '')));
+    });
+
+    if (valid.length < arr.length) {
+      setError(`Some files were skipped — only ${accept} files accepted`);
+    }
+
     if (multiple) {
-      const combined = [...files, ...arr].slice(0, maxFiles);
+      const combined = [...files, ...valid].slice(0, maxFiles);
       onFilesChange(combined);
     } else {
-      onFilesChange(arr.slice(0, 1));
+      onFilesChange(valid.slice(0, 1));
     }
-  }, [files, multiple, maxFiles, onFilesChange]);
+  }, [accept, multiple, files, onFilesChange, maxFiles]);
 
-  const handleDrop = useCallback((e: DragEvent) => {
-    e.preventDefault();
-    setIsDragOver(false);
-    if (e.dataTransfer.files.length) addFiles(e.dataTransfer.files);
-  }, [addFiles]);
-
-  const handleDragOver = useCallback((e: DragEvent) => {
-    e.preventDefault();
-    setIsDragOver(true);
-  }, []);
-
-  const removeFile = useCallback((id: string) => {
-    onFilesChange(files.filter(f => f.id !== id));
+  const removeFile = useCallback((index: number) => {
+    onFilesChange(files.filter((_, i) => i !== index));
+    setError(null);
   }, [files, onFilesChange]);
 
   return (
     <div className="space-y-3">
       {/* Drop zone */}
       <div
-        onClick={() => inputRef.current?.click()}
-        onDrop={handleDrop}
-        onDragOver={handleDragOver}
-        onDragLeave={() => setIsDragOver(false)}
-        className={`relative border-2 border-dashed rounded-lg cursor-pointer transition-all duration-150 ${
-          isDragOver
+        className={`relative border-2 border-dashed rounded-lg transition-all cursor-pointer ${
+          isDragging
             ? 'border-teal-500 bg-teal-500/5'
-            : 'border-[#27272a] hover:border-zinc-600 bg-transparent'
-        } ${files.length > 0 ? 'py-6 px-4' : 'py-12 sm:py-16 px-4'}`}
+            : files.length > 0
+              ? 'border-zinc-700 bg-[#111113]'
+              : 'border-zinc-700 hover:border-zinc-500 bg-[#111113]'
+        }`}
+        onClick={() => inputRef.current?.click()}
+        onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+        onDragLeave={() => setIsDragging(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setIsDragging(false);
+          handleFiles(e.dataTransfer.files);
+        }}
       >
-        <div className="flex flex-col items-center text-center">
-          <Upload size={20} className={`mb-2 ${isDragOver ? 'text-teal-500' : 'text-zinc-600'}`} />
-          <p className="text-[13px] text-zinc-300 font-medium">{label}</p>
-          <p className="text-[11px] text-zinc-600 mt-1">
-            {accept === '.pdf' ? 'PDF files' : accept.replace(/\./g, '').toUpperCase() + ' files'}
-            {multiple && ` · up to ${maxFiles} files`}
+        <div className="flex flex-col items-center justify-center py-10 sm:py-14 px-4">
+          <div className={`w-12 h-12 rounded-lg flex items-center justify-center mb-3 transition-colors ${
+            isDragging ? 'bg-teal-500/20 text-teal-400' : 'bg-zinc-800 text-zinc-500'
+          }`}>
+            <Upload size={22} />
+          </div>
+          <p className="text-[13px] font-medium text-zinc-200 text-center">
+            {label || (multiple ? 'Drop files here or click to browse' : 'Drop a file here or click to browse')}
+          </p>
+          <p className="text-[11px] text-zinc-600 mt-1 text-center">
+            Accepts {accept} · {multiple ? `Up to ${maxFiles} files` : 'Single file'} · Processed locally
           </p>
         </div>
+
         <input
           ref={inputRef}
           type="file"
           accept={accept}
           multiple={multiple}
-          onChange={(e) => { if (e.target.files?.length) addFiles(e.target.files); e.target.value = ''; }}
+          onChange={(e) => handleFiles(e.target.files)}
           className="hidden"
         />
       </div>
 
+      {/* Error */}
+      {error && (
+        <div className="flex items-center gap-2 text-[11px] text-amber-400 bg-amber-500/5 border border-amber-500/20 rounded-lg px-3 py-2">
+          <AlertCircle size={13} className="shrink-0" />
+          {error}
+        </div>
+      )}
+
       {/* File list */}
       {files.length > 0 && (
         <div className="space-y-1.5">
-          {files.map((f, i) => (
-            <div key={f.id} className="flex items-center gap-3 px-3 py-2 bg-[#111113] border border-[#1e1e21] rounded-lg group">
-              <span className="text-[10px] font-mono text-zinc-600 w-5 text-right shrink-0">{i + 1}</span>
-              <FileIcon size={14} className="text-zinc-500 shrink-0" />
-              <span className="text-[12px] text-zinc-200 truncate flex-1">{f.name}</span>
-              <span className="text-[10px] font-mono text-zinc-600 shrink-0">{formatFileSize(f.size)}</span>
-              {f.pages !== undefined && (
-                <span className="text-[10px] font-mono text-zinc-600 shrink-0">{f.pages}p</span>
-              )}
+          {files.map((file, i) => (
+            <div key={`${file.name}-${i}`} className="flex items-center gap-3 bg-[#111113] border border-zinc-800/50 rounded-lg px-3 py-2.5">
+              <File size={15} className="text-teal-500 shrink-0" />
+              <div className="flex-1 min-w-0">
+                <p className="text-[12px] font-medium text-zinc-200 truncate">{file.name}</p>
+                <p className="text-[10px] font-mono text-zinc-600">{formatFileSize(file.size)}</p>
+              </div>
               <button
-                onClick={(e) => { e.stopPropagation(); removeFile(f.id); }}
-                className="opacity-0 group-hover:opacity-100 p-0.5 text-zinc-600 hover:text-red-400 transition-all"
+                onClick={(e) => { e.stopPropagation(); removeFile(i); }}
+                className="p-1 text-zinc-600 hover:text-red-400 transition-colors shrink-0"
               >
-                <X size={12} />
+                <X size={14} />
               </button>
             </div>
           ))}

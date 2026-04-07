@@ -1,65 +1,82 @@
 'use client';
-
 import { useState, useCallback } from 'react';
-import { Trash2, Download } from 'lucide-react';
+import { Download, Loader2 } from 'lucide-react';
 import ToolLayout from '@/components/ToolLayout';
 import FileDropZone from '@/components/FileDropZone';
-import ProgressBar from '@/components/ProgressBar';
-import { type FileWithMeta, downloadUint8Array } from '@/lib/file-utils';
-import { deletePages } from '@/lib/pdf-engine';
+import { deletePages, getPageCount } from '@/lib/pdf-engine';
+import { readFileAsArrayBuffer, downloadBytes, generateOutputFilename } from '@/lib/file-utils';
 
 export default function DeletePagesPage() {
-  const [files, setFiles] = useState<FileWithMeta[]>([]);
-  const [pageInput, setPageInput] = useState('');
-  const [status, setStatus] = useState<'idle' | 'processing' | 'done' | 'error'>('idle');
-  const [progress, setProgress] = useState(0);
+  const [files, setFiles] = useState<File[]>([]);
+  const [pageCount, setPageCount] = useState(0);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [processing, setProcessing] = useState(false);
+  const [result, setResult] = useState<Uint8Array | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleFilesChange = useCallback(async (newFiles: File[]) => {
+    setFiles(newFiles); setResult(null); setError(null); setSelected(new Set());
+    if (newFiles.length > 0) {
+      const buf = await readFileAsArrayBuffer(newFiles[0]);
+      setPageCount(await getPageCount(buf));
+    }
+  }, []);
+
+  const togglePage = (i: number) => {
+    const next = new Set(selected);
+    next.has(i) ? next.delete(i) : next.add(i);
+    setSelected(next);
+  };
 
   const handleDelete = useCallback(async () => {
-    if (files.length === 0 || !pageInput.trim()) return;
-    setStatus('processing');
-    setProgress(40);
-
+    if (files.length === 0 || selected.size === 0) return;
+    setProcessing(true); setError(null); setResult(null);
     try {
-      const pages = pageInput.split(',').map(s => s.trim()).flatMap(part => {
-        if (part.includes('-')) {
-          const [a, b] = part.split('-').map(Number);
-          return Array.from({ length: b - a + 1 }, (_, i) => a + i - 1);
-        }
-        return [Number(part) - 1];
-      }).filter(p => p >= 0 && !isNaN(p));
-
-      setProgress(70);
-      const result = await deletePages(files[0].file, pages);
-      setProgress(100);
-      setStatus('done');
-      downloadUint8Array(result, `trimmed_${files[0].name}`);
-    } catch (err) {
-      console.error(err);
-      setStatus('error');
-    }
-  }, [files, pageInput]);
+      const buffer = await readFileAsArrayBuffer(files[0]);
+      const result = await deletePages(buffer, Array.from(selected));
+      setResult(result);
+    } catch (err) { setError(`Failed: ${err instanceof Error ? err.message : 'Unknown error'}`); }
+    finally { setProcessing(false); }
+  }, [files, selected]);
 
   return (
-    <ToolLayout name="Delete Pages" description="Remove specific pages from a PDF." icon={Trash2}>
+    <ToolLayout slug="delete-pages">
       <div className="space-y-5">
-        <FileDropZone accept=".pdf" multiple={false} files={files} onFilesChange={setFiles} label="Drop a PDF" />
-        {files.length > 0 && (
-          <div>
-            <label className="text-[11px] text-zinc-500 font-mono uppercase tracking-wider mb-1.5 block">Pages to delete</label>
-            <input type="text" value={pageInput} onChange={(e) => setPageInput(e.target.value)}
-              placeholder="e.g. 1,3,5-8"
-              className="w-full bg-transparent border border-[#27272a] rounded-lg px-3 py-2.5 text-[13px] font-mono text-zinc-100 placeholder:text-zinc-700 focus:outline-none focus:border-teal-500/40" />
-            <p className="text-[10px] text-zinc-600 mt-1.5">These pages will be permanently removed from the output.</p>
-          </div>
+        <FileDropZone accept=".pdf" multiple={false} files={files} onFilesChange={handleFilesChange} label="Drop a PDF to remove pages from" />
+        {files.length > 0 && pageCount > 0 && !result && (
+          <>
+            <div>
+              <p className="text-[11px] text-zinc-500 font-mono mb-2">Select pages to delete ({selected.size} of {pageCount} selected)</p>
+              <div className="flex flex-wrap gap-1.5">
+                {Array.from({ length: pageCount }, (_, i) => (
+                  <button key={i} onClick={() => togglePage(i)}
+                    className={`w-9 h-9 rounded-lg text-[11px] font-mono transition-colors ${
+                      selected.has(i) ? 'bg-red-500/20 text-red-400 border border-red-500/30' : 'bg-zinc-800/50 text-zinc-400 border border-zinc-800'
+                    }`}>{i + 1}</button>
+                ))}
+              </div>
+            </div>
+            {selected.size > 0 && selected.size < pageCount && (
+              <button onClick={handleDelete} disabled={processing}
+                className="w-full flex items-center justify-center gap-2 bg-red-500/80 hover:bg-red-500 disabled:opacity-50 text-white font-display font-medium rounded-lg py-3 text-[13px] transition-all">
+                {processing ? <Loader2 size={15} className="animate-spin" /> : null}
+                {processing ? 'Deleting...' : `Delete ${selected.size} page${selected.size > 1 ? 's' : ''}`}
+              </button>
+            )}
+            {selected.size === pageCount && <p className="text-[11px] text-amber-400 text-center">Cannot delete all pages</p>}
+          </>
         )}
-        <ProgressBar progress={progress} status={status} label={status === 'processing' ? 'Removing pages...' : status === 'done' ? 'Done — downloading' : undefined} />
-        <button onClick={handleDelete} disabled={files.length === 0 || !pageInput.trim() || status === 'processing'}
-          className="w-full flex items-center justify-center gap-2 bg-zinc-100 hover:bg-white disabled:bg-zinc-800 disabled:text-zinc-600 text-zinc-900 font-display font-semibold rounded-lg py-3 text-[13px] transition-all active:scale-[0.99]">
-          {status === 'done' ? <><Download size={15} /> Download</> : <><Trash2 size={15} /> Delete Pages</>}
-        </button>
-        {status === 'done' && (
-          <button onClick={() => { setFiles([]); setStatus('idle'); setProgress(0); setPageInput(''); }}
-            className="w-full text-center text-[12px] text-zinc-500 hover:text-zinc-300 transition-colors py-2">Process another file</button>
+        {error && <div className="text-[11px] text-red-400 bg-red-500/5 border border-red-500/20 rounded-lg px-3 py-2">{error}</div>}
+        {result && (
+          <div className="bg-green-500/5 border border-green-500/20 rounded-lg p-4">
+            <div className="flex items-center justify-between">
+              <p className="text-[13px] font-medium text-green-400">Pages deleted</p>
+              <button onClick={() => downloadBytes(result, generateOutputFilename(files[0]?.name || 'doc', 'trimmed'))}
+                className="flex items-center gap-2 bg-green-500/20 hover:bg-green-500/30 text-green-400 rounded-lg px-4 py-2 text-[12px] font-medium transition-colors">
+                <Download size={14} /> Download
+              </button>
+            </div>
+          </div>
         )}
       </div>
     </ToolLayout>

@@ -1,55 +1,52 @@
 'use client';
-
 import { useState, useCallback } from 'react';
-import { Images, Download } from 'lucide-react';
+import { Download, Loader2 } from 'lucide-react';
 import ToolLayout from '@/components/ToolLayout';
 import FileDropZone from '@/components/FileDropZone';
-import ProgressBar from '@/components/ProgressBar';
-import { type FileWithMeta, downloadUint8Array } from '@/lib/file-utils';
 import { imagesToPDF } from '@/lib/pdf-engine';
+import { readFileAsArrayBuffer, downloadBytes } from '@/lib/file-utils';
 
 export default function ImagesToPDFPage() {
-  const [files, setFiles] = useState<FileWithMeta[]>([]);
-  const [status, setStatus] = useState<'idle' | 'processing' | 'done' | 'error'>('idle');
-  const [progress, setProgress] = useState(0);
+  const [files, setFiles] = useState<File[]>([]);
+  const [processing, setProcessing] = useState(false);
+  const [result, setResult] = useState<Uint8Array | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const handleConvert = useCallback(async () => {
     if (files.length === 0) return;
-    setStatus('processing');
-    setProgress(30);
+    setProcessing(true); setError(null); setResult(null);
     try {
-      setProgress(60);
-      const result = await imagesToPDF(files.map(f => f.file));
-      setProgress(100);
-      setStatus('done');
-      downloadUint8Array(result, 'images_combined.pdf');
-    } catch (err) {
-      console.error(err);
-      setStatus('error');
-    }
+      const images = await Promise.all(files.map(async (f) => ({
+        data: await readFileAsArrayBuffer(f),
+        type: f.type || 'image/jpeg',
+      })));
+      setResult(await imagesToPDF(images));
+    } catch (err) { setError(`Failed: ${err instanceof Error ? err.message : 'Unknown error'}`); }
+    finally { setProcessing(false); }
   }, [files]);
 
   return (
-    <ToolLayout name="Images to PDF" description="Combine multiple images into a single PDF document." icon={Images}>
+    <ToolLayout slug="images-to-pdf">
       <div className="space-y-5">
-        <FileDropZone
-          accept=".jpg,.jpeg,.png,.webp"
-          multiple={true}
-          files={files}
-          onFilesChange={setFiles}
-          label="Drop images to combine into PDF"
-        />
-        {files.length > 0 && (
-          <p className="text-[11px] text-zinc-500">{files.length} images · JPG and PNG supported · images will appear in order shown</p>
+        <FileDropZone accept=".jpg,.jpeg,.png,.webp,.gif,.bmp" multiple files={files} onFilesChange={(f) => { setFiles(f); setResult(null); }} label="Drop images to combine into PDF" maxFiles={50} />
+        {files.length > 0 && !result && (
+          <button onClick={handleConvert} disabled={processing}
+            className="w-full flex items-center justify-center gap-2 bg-teal-500 hover:bg-teal-400 disabled:opacity-50 text-zinc-900 font-display font-medium rounded-lg py-3 text-[13px] transition-all">
+            {processing ? <Loader2 size={15} className="animate-spin" /> : null}
+            {processing ? 'Converting...' : `Convert ${files.length} image${files.length > 1 ? 's' : ''} to PDF`}
+          </button>
         )}
-        <ProgressBar progress={progress} status={status} label={status === 'processing' ? 'Converting...' : status === 'done' ? 'Done — downloading' : undefined} />
-        <button onClick={handleConvert} disabled={files.length === 0 || status === 'processing'}
-          className="w-full flex items-center justify-center gap-2 bg-zinc-100 hover:bg-white disabled:bg-zinc-800 disabled:text-zinc-600 text-zinc-900 font-display font-semibold rounded-lg py-3 text-[13px] transition-all active:scale-[0.99]">
-          {status === 'done' ? <><Download size={15} /> Download PDF</> : <><Images size={15} /> Create PDF from {files.length || 0} Images</>}
-        </button>
-        {status === 'done' && (
-          <button onClick={() => { setFiles([]); setStatus('idle'); setProgress(0); }}
-            className="w-full text-center text-[12px] text-zinc-500 hover:text-zinc-300 transition-colors py-2">Convert more images</button>
+        {error && <div className="text-[11px] text-red-400 bg-red-500/5 border border-red-500/20 rounded-lg px-3 py-2">{error}</div>}
+        {result && (
+          <div className="bg-green-500/5 border border-green-500/20 rounded-lg p-4">
+            <div className="flex items-center justify-between">
+              <p className="text-[13px] font-medium text-green-400">PDF created from {files.length} images</p>
+              <button onClick={() => downloadBytes(result, 'images-combined.pdf')}
+                className="flex items-center gap-2 bg-green-500/20 hover:bg-green-500/30 text-green-400 rounded-lg px-4 py-2 text-[12px] font-medium transition-colors">
+                <Download size={14} /> Download
+              </button>
+            </div>
+          </div>
         )}
       </div>
     </ToolLayout>
